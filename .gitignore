@@ -1,20 +1,131 @@
+#############################################
+# OS / Editor
+#############################################
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.vscode/
+.idea/
+
+#############################################
+# Git / Logs
+#############################################
+*.log
+logs/
+*.tmp
+*.temp
+
+#############################################
 # Python
+#############################################
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
 
-# Virtual env
+#############################################
+# Python virtual environments
+#############################################
 venv/
+.venv/
+env/
+ENV/
 
-# Node
+#############################################
+# Jupyter
+#############################################
+.ipynb_checkpoints/
+
+#############################################
+# Node / Frontend
+#############################################
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+.next/
+out/
+.vite/
 
-# ML models & checkpoints
+#############################################
+# Secrets / Env files 
+#############################################
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.*
+config.local.*
+
+#############################################
+# HuggingFace / Transformers / Torch caches
+#############################################
+.cache/
+.huggingface/
+hf_cache/
+wandb/
+mlruns/
+
+#############################################
+# Trained models / checkpoints
+#############################################
 models/
+checkpoints/
 **/checkpoint-*/
+runs/
+outputs/
+
+# Big model/artifact file types
 *.pt
 *.pth
+*.ckpt
 *.bin
 *.safetensors
+*.onnx
+*.tflite
 
-# Cache
-.cache/
+# Trainer artifacts
+trainer_state.json
+training_args.bin
+optimizer.pt
+scheduler.pt
+rng_state.pth
+
+#############################################
+# Data
+#############################################
+data/
+dataset/
+datasets/
+*.csv
+*.tsv
+*.parquet
+*.jsonl
+*.pkl
+*.pickle
+*.sqlite
+*.db
+
+#############################################
+# Archives
+#############################################
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
