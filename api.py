@@ -22,7 +22,7 @@ app = FastAPI(title="Elder Message Risk Analyzer", version="1.0")
 
 zero_shot = ZeroShotScamModel()
 
-sklearn_spam = None
+sklearn_spam = SklearnSpamModel()
 
 openai_model = None
 

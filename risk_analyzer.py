@@ -8,7 +8,7 @@ from datasets import load_dataset
 
 # ds = load_dataset("FredZhang7/toxi-text-3M")
 
-pipe = pipeline("zero-shot-classification", model="MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
+# pipe = pipeline("zero-shot-classification", model="MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
 
 URL_RE = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
 
@@ -211,7 +211,7 @@ class RiskAnalyzer:
                 consequences=list(out["consequences"]),
                 urls=urls,
             )
-        
+
         risks: Dict[str, float] = {}
         if self.zero_shot is not None:
             risks = self.zero_shot.predict(text)
@@ -240,9 +240,9 @@ class RiskAnalyzer:
         reasons: List[str] = []
 
         is_clearly_benign = (
-            benign >= 0.6
-            and scam_max < 0.5
-            and (phishing_p is None or phishing_p < 0.4)  
+            benign >= 0.7
+            and scam_max < 0.6
+            and (phishing_p is None or phishing_p < 0.5)  
             and not urls 
             and (spam_p is None or spam_p < 0.5)
         )
@@ -259,6 +259,17 @@ class RiskAnalyzer:
                 candidates.append(spam_p)
 
             risk_score = max(candidates) if candidates else 0.0
+            has_hard_signal = (
+                bool(urls)
+                or ("otp" in text.lower() or "קוד" in text or "אימות" in text)
+                or ("bank" in text.lower() or "בנק" in text)
+                or ("urgent" in text.lower() or "דחוף" in text or "מיד" in text)
+            )
+
+            if (not has_hard_signal) and risk_score < 0.75:
+                risk_score = 0.0
+                top_risk = "benign"
+
 
             if phishing_p is not None and phishing_p == risk_score and phishing_p >= 0.5:
                 top_risk = "phishing"
@@ -266,31 +277,42 @@ class RiskAnalyzer:
                 top_risk = max(
                     scam_scores.keys(),
                     key=lambda k: scam_scores[k],
-                    default="unknown",
+                    default="benign",
                 )
 
-            if urls:
-                risk_score = min(1.0, risk_score + 0.10)
-                reasons.append("Contains a link (common in phishing/malware).")
-
-        
         if urls:
+            # risk_score = min(1.0, risk_score + 0.10)
             reasons.append("Contains a link (common in phishing/malware).")
         if "otp" in text.lower() or "קוד" in text or "אימות" in text:
             reasons.append("Asks for a verification code/OTP (often account takeover).")
         if "bank" in text.lower() or "בנק" in text:
             reasons.append("Mentions a bank/account (common in phishing).")
-        if "urgent" in text.lower() or "דחוף" in text or "מייד" in text:
+        if "urgent" in text.lower() or "דחוף" in text or "מיד" in text:
             reasons.append("Uses urgency pressure.")
 
         consequences = CONSEQUENCE_MAP.get(top_risk, ["Possible scam impact: money loss, account takeover, or malware."])
 
-        risks_sorted = dict(sorted(risks.items(), key=lambda kv: kv[1], reverse=True)) if risks else {}
+        # risks_sorted = dict(sorted(risks.items(), key=lambda kv: kv[1], reverse=True)) if risks else {}
+        # return RiskResult(
+        #     risk_score=float(risk_score),
+        #     top_risk=top_risk,
+        #     risks=risks_sorted,
+        #     reasons=reasons[:6],
+        #     consequences=consequences[:6],
+        #     urls=urls,
+        # )
+
+        risks_sorted = (
+            {k: round(v, 2) for k, v in sorted(risks.items(), key=lambda kv: kv[1], reverse=True)}
+            if risks else {}
+        )
+
         return RiskResult(
-            risk_score=float(risk_score),
+            risk_score=round(float(risk_score), 2),
             top_risk=top_risk,
             risks=risks_sorted,
             reasons=reasons[:6],
             consequences=consequences[:6],
             urls=urls,
         )
+

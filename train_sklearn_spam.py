@@ -1,6 +1,6 @@
 """
 train_sklearn_spam.py
-Replaces your current dataset training code, but *saves* the trained artifacts so the API can reuse them.
+Replaces the current dataset training code, but *saves* the trained artifacts so the API can reuse them.
 Run:
   python train_sklearn_spam.py
 Outputs:

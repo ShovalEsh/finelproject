@@ -1,3 +1,8 @@
+"""
+training hebrew_dataset.csv with DeBERTa
+Run:
+  python train_phishing_model.py
+"""
 from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
@@ -76,6 +81,14 @@ trainer = Trainer(
     train_dataset=train_enc,
     eval_dataset=test_enc,
     compute_metrics=compute_metrics,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="f1",
+    greater_is_better=True,
+    logging_steps=20,
+    seed=42,
+
 )
 
 if __name__ == "__main__":
