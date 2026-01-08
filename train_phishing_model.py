@@ -14,7 +14,7 @@ import numpy as np
 import evaluate
 from sklearn.metrics import f1_score
 
-MODEL_NAME = "microsoft/deberta-v3-xsmall"
+MODEL_NAME = "dicta-il/alephbertgimmel-small"
 DATA_PATH = "hebrew_dataset.csv"
 OUTPUT_DIR = "./models/hebrew-phishing-model"
 
@@ -33,7 +33,7 @@ def encode_labels(batch):
 train_ds = train_ds.map(encode_labels, batched=True)
 test_ds = test_ds.map(encode_labels, batched=True)
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
 
 def preprocess(batch):
     return tokenizer(
@@ -72,6 +72,13 @@ training_args = TrainingArguments(
     per_device_eval_batch_size=8,
     learning_rate=2e-5,
     weight_decay=0.01,
+    eval_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="f1",
+    greater_is_better=True,
+    logging_steps=20,
+    seed=42,
 )
 
 
@@ -81,13 +88,6 @@ trainer = Trainer(
     train_dataset=train_enc,
     eval_dataset=test_enc,
     compute_metrics=compute_metrics,
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    metric_for_best_model="f1",
-    greater_is_better=True,
-    logging_steps=20,
-    seed=42,
 
 )
 

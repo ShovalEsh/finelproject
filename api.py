@@ -9,6 +9,7 @@ Then POST:
 from __future__ import annotations
 
 from fastapi import FastAPI
+import os
 from pydantic import BaseModel, Field
 from risk_analyzer import (
     RiskAnalyzer,
@@ -20,14 +21,15 @@ from risk_analyzer import (
 
 app = FastAPI(title="Elder Message Risk Analyzer", version="1.0")
 
-zero_shot = ZeroShotScamModel()
+use_zero_shot = os.getenv("USE_ZERO_SHOT", "").strip().lower() in {"1", "true", "yes", "on"}
+zero_shot = ZeroShotScamModel() if use_zero_shot else None
 
 sklearn_spam = SklearnSpamModel()
 
 openai_model = None
 
 analyzer = RiskAnalyzer(
-    zero_shot=ZeroShotScamModel(),
+    zero_shot=zero_shot,
     sklearn_spam=None,
     openai_model=None,
     finetuned_phishing=FineTunedPhishingModel(
