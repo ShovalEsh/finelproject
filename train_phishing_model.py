@@ -15,10 +15,16 @@ import evaluate
 from sklearn.metrics import f1_score
 
 MODEL_NAME = "dicta-il/alephbertgimmel-small"
-DATA_PATH = "hebrew_dataset.csv"
+# DATA_PATH = "hebrew_dataset.csv"
 OUTPUT_DIR = "./models/hebrew-phishing-model"
 
-dataset = load_dataset("csv", data_files={"data": DATA_PATH})
+DATA_FILES = [
+    "hebrew_dataset.csv",
+    "hebrew_dataset_large_normalized.csv",
+]
+
+dataset = load_dataset("csv", data_files={"data": DATA_FILES})
+# dataset = load_dataset("csv", data_files={"data": DATA_PATH})
 dataset = dataset["data"].train_test_split(test_size=0.2, seed=42)
 train_ds = dataset["train"]
 test_ds = dataset["test"]
@@ -72,7 +78,7 @@ training_args = TrainingArguments(
     per_device_eval_batch_size=8,
     learning_rate=2e-5,
     weight_decay=0.01,
-    eval_strategy="epoch",
+    evaluation_strategy="epoch",
     save_strategy="epoch",
     load_best_model_at_end=True,
     metric_for_best_model="f1",

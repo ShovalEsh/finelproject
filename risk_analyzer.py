@@ -2,18 +2,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Any
 import re
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
-from datasets import load_dataset
+from url_risk import analyze_urls_in_text
+import unicodedata
 
-# ds = load_dataset("FredZhang7/toxi-text-3M")
-
-# pipe = pipeline("zero-shot-classification", model="MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
-
-URL_RE = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
-
-def extract_urls(text: str) -> List[str]:
-    return [u.rstrip(").,;!?]\"'") for u in URL_RE.findall(text or "")]
+def normalize_message_text(text: str) -> str:
+    text = text or ""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\t", " ")
+    text = re.sub(r"[ \xa0]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 def looks_like_hebrew(text: str) -> bool:
     return any("\u0590" <= ch <= "\u05FF" for ch in (text or ""))
@@ -31,7 +32,12 @@ HEBREW_SCAM_SIGNALS: List[Tuple[List[str], str, float]] = [
     (
         ["תשלום", "העברה", "הפקדה", "חיוב", "כרטיס", "אשראי", "חשבונית"],
         "Requests money or payment details.",
-        0.8,
+        0.80,
+    ),
+    (
+        ["חוב", "חוב פתוח", "אגרה", "קנס", "יתרה", "הסדר", "הסדרת חוב", "תשלום חוב"],
+        "Mentions debt, fine, or urgent payment settlement.",
+        0.82,
     ),
     (
         ["חשבון", "סיסמה", "התחברות", "אימות", "קוד", "בנק"],
@@ -39,19 +45,36 @@ HEBREW_SCAM_SIGNALS: List[Tuple[List[str], str, float]] = [
         0.85,
     ),
     (
-        ["קישור", "לינק", "לחץ", "היכנס", "כניסה", "לחיצה"],
+        ["קישור", "לינק", "לחץ", "היכנס", "כניסה", "לחיצה", "לפרטים נוספים"],
         "Encourages clicking a link.",
         0.75,
     ),
     (
-        ["דחוף", "מייד", "מיד", "בהקדם"],
+        ["דחוף", "מייד", "מיד", "בהקדם", "עוד היום", "היום", "התראה", "אחרון"],
         "Uses urgency pressure.",
-        0.65,
+        0.72,
+    ),
+    (
+        ["כביש 6", "דואר ישראל", "ביטוח לאומי", "רשות המסים", "משטרה", "בנק", "ויזה", "פייפאל"],
+        "Mentions a known organization or trusted entity.",
+        0.55,
     ),
 ]
 
 HEBREW_TOKEN_RE = re.compile(r"[\u0590-\u05FF]+")
 HEBREW_PREFIXES = ("ו", "ב", "ל", "מ", "כ", "ה")
+SHORTENER_DOMAINS = {
+    "bit.ly",
+    "cutt.ly",
+    "tinyurl.com",
+    "t.co",
+    "goo.gl",
+    "ow.ly",
+    "is.gd",
+    "rb.gy",
+    "rebrand.ly",
+    "shorturl.at",
+}
 
 def hebrew_tokens(text: str) -> List[str]:
     return HEBREW_TOKEN_RE.findall(text or "")
@@ -116,14 +139,30 @@ def combine_signal_weights(weights: List[float]) -> float:
         score = 1.0 - (1.0 - score) * (1.0 - value)
     return max(0.0, min(1.0, score))
 
+def contains_shortened_url(text: str, urls: List[str]) -> bool:
+    lowered = (text or "").lower()
+
+    for domain in SHORTENER_DOMAINS:
+        if domain in lowered:
+            return True
+
+    for url in urls:
+        if any(domain in url.lower() for domain in SHORTENER_DOMAINS):
+            return True
+
+    return False
+
 @dataclass
 class RiskResult:
     risk_score: float
+    alert_level: str
     top_risk: str
+    message_category: str
     risks: Dict[str, float]
     reasons: List[str]
     consequences: List[str]
     urls: List[str]
+    suspicious_urls: List[Dict[str, Any]]
 
 class ZeroShotScamModel:
     DEFAULT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
@@ -162,71 +201,6 @@ class ZeroShotScamModel:
         )
         return {lbl: float(score) for lbl, score in zip(out["labels"], out["scores"])}
 
-class SklearnSpamModel:
-    """
-    Loads a trained TF-IDF + LogisticRegression model (English SMS spam).
-    """
-    def __init__(self, model_path: str = "spam_model.joblib", vectorizer_path: str = "tfidf.joblib"):
-        self.model_path = model_path
-        self.vectorizer_path = vectorizer_path
-        self._model = None
-        self._vec = None
-
-    def _load(self):
-        if self._model is not None and self._vec is not None:
-            return
-        import joblib
-        self._model = joblib.load(self.model_path)
-        self._vec = joblib.load(self.vectorizer_path)
-
-    def predict_spam_probability(self, text: str) -> float:
-        self._load()
-        X = self._vec.transform([text])
-        proba = self._model.predict_proba(X)[0]
-        classes = list(self._model.classes_)
-        if "spam" in classes:
-            return float(proba[classes.index("spam")])
-        return float(proba[1]) if len(proba) > 1 else float(proba[0])
-
-class OpenAIRiskModel:
-    """
-    Calls OpenAI to classify risk with structured JSON output.
-    """
-    def __init__(self, model: str = "gpt-4.1-mini"):
-        self.model = model
-
-    def predict(self, text: str) -> Dict[str, Any]:
-        from openai import OpenAI
-        client = OpenAI()
-        schema = {
-            "type": "object",
-            "properties": {
-                "risk_score": {"type": "number", "minimum": 0, "maximum": 1},
-                "top_risk": {"type": "string"},
-                "risks": {
-                    "type": "object",
-                    "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
-                },
-                "reasons": {"type": "array", "items": {"type": "string"}},
-                "consequences": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["risk_score", "top_risk", "risks", "reasons", "consequences"],
-            "additionalProperties": False
-        }
-
-        prompt = (
-            "You are a cybersecurity assistant for older adults. "
-            "Given a message they received (SMS/WhatsApp/email), assess scam risk.\n"
-            "Return JSON only.\n\n"
-            f"Message:\n{text}"
-        )
-
-        resp = client.responses.create(
-            model=self.model,
-            input=prompt,
-            response_format={"type": "json_schema", "json_schema": {"name": "risk_assessment", "schema": schema}},
-        )
-        return resp.output_parsed
 
 CONSEQUENCE_MAP: Dict[str, List[str]] = {
     "benign": [
@@ -265,7 +239,7 @@ CONSEQUENCE_MAP: Dict[str, List[str]] = {
 
 class FineTunedPhishingModel:
     def __init__(self, model_dir: str):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=False)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_dir)
         self.model.eval()
 
@@ -286,38 +260,53 @@ class RiskAnalyzer:
     def __init__(
         self,
         zero_shot: Optional[ZeroShotScamModel] = None,
-        sklearn_spam: Optional[SklearnSpamModel] = None,
-        openai_model: Optional[OpenAIRiskModel] = None,
         finetuned_phishing: Optional[FineTunedPhishingModel] = None,
     ):
         self.zero_shot = zero_shot
-        self.sklearn_spam = sklearn_spam
-        self.openai_model = openai_model
         self.finetuned_phishing = finetuned_phishing
 
     def analyze(self, text: str) -> RiskResult:
-        text = (text or "").strip()
+        text = normalize_message_text(text)
         lower_text = text.lower()
         is_hebrew = looks_like_hebrew(text)
-        urls = extract_urls(text)
+        url_analysis = analyze_urls_in_text(text)
+        urls = url_analysis["urls"]
+        suspicious_urls = url_analysis["suspicious"]
+        url_risk_score = url_analysis["max_url_risk_score"] / 100.0
+        has_shortened_url = contains_shortened_url(text, urls)
         hebrew_signals = find_hebrew_scam_signals(text) if is_hebrew else []
         hebrew_signal_reasons = [reason for reason, _ in hebrew_signals]
         hebrew_signal_weights = [weight for _, weight in hebrew_signals]
         signal_weights = list(hebrew_signal_weights)
         if urls:
-            signal_weights.append(0.8)
+            signal_weights.append(0.35)
+        if has_shortened_url:
+            signal_weights.append(0.55)
+        if url_risk_score > 0:
+            signal_weights.append(url_risk_score)
         hebrew_signal_score = combine_signal_weights(signal_weights)
+        trusted_entity_terms = [
+            "כביש 6", "דואר ישראל", "ביטוח לאומי", "רשות המסים",
+            "משטרה", "בנק", "ויזה", "פייפאל"
+        ]
 
-        if self.openai_model is not None:
-            out = self.openai_model.predict(text)
-            return RiskResult(
-                risk_score=float(out["risk_score"]),
-                top_risk=str(out["top_risk"]),
-                risks={k: float(v) for k, v in dict(out["risks"]).items()},
-                reasons=list(out["reasons"]),
-                consequences=list(out["consequences"]),
-                urls=urls,
-            )
+        has_trusted_entity = any(term in text for term in trusted_entity_terms)
+        has_payment_or_debt = any(term in text for term in ["חוב", "תשלום", "אגרה", "קנס", "הסדר", "חיוב"])
+        has_urgency = any(term in text for term in ["דחוף", "מייד", "מיד", "בהקדם", "עוד היום", "היום", "אחרון"])
+
+        rules_bonus = 0.0
+
+        if has_shortened_url:
+            rules_bonus = max(rules_bonus, 0.55)
+
+        if has_payment_or_debt and has_urgency:
+            rules_bonus = max(rules_bonus, 0.60)
+
+        if has_trusted_entity and (has_shortened_url or suspicious_urls):
+            rules_bonus = max(rules_bonus, 0.75)
+
+        if has_trusted_entity and has_payment_or_debt and (urls or has_shortened_url):
+            rules_bonus = max(rules_bonus, 0.80)
 
         risks: Dict[str, float] = {}
         use_zero_shot = self.zero_shot is not None and not (
@@ -327,11 +316,6 @@ class RiskAnalyzer:
             risks = self.zero_shot.predict(text)
 
         spam_p = None
-        if self.sklearn_spam is not None and looks_like_english(text):
-            try:
-                spam_p = self.sklearn_spam.predict_spam_probability(text)
-            except Exception:
-                spam_p = None
 
         raw_phishing_p = None
         if self.finetuned_phishing is not None:
@@ -341,12 +325,14 @@ class RiskAnalyzer:
                 raw_phishing_p = None
 
         phishing_p = raw_phishing_p
-        if is_hebrew and hebrew_signal_score:
-            if raw_phishing_p is None:
-                phishing_p = hebrew_signal_score
-            else:
-                blended = (0.2 * raw_phishing_p) + (0.8 * hebrew_signal_score)
-                phishing_p = max(raw_phishing_p, blended)
+        if is_hebrew:
+            combined_rule_score = max(hebrew_signal_score, rules_bonus)
+            if combined_rule_score:
+                if raw_phishing_p is None:
+                    phishing_p = combined_rule_score
+                else:
+                    blended = (0.55 * raw_phishing_p) + (0.45 * combined_rule_score)
+                    phishing_p = max(raw_phishing_p, blended, combined_rule_score * 0.9)
 
         if raw_phishing_p is not None:
             risks["phishing_supervised"] = raw_phishing_p
@@ -378,15 +364,27 @@ class RiskAnalyzer:
             candidates.append(spam_p)
 
         risk_score = max(candidates) if candidates else 0.0
+        if suspicious_urls:
+            risk_score = max(risk_score, min(1.0, 0.35 + url_risk_score * 0.65))
+    
         has_hard_signal = (
-            bool(urls)
+            bool(suspicious_urls)
+            or has_shortened_url
             or ("otp" in lower_text or "קוד" in text or "אימות" in text)
             or ("bank" in lower_text or "בנק" in text)
-            or ("urgent" in lower_text or "דחוף" in text or "מיד" in text)
+            or has_urgency
+            or has_payment_or_debt
+            or (has_trusted_entity and (urls or has_shortened_url))
             or bool(hebrew_signal_reasons)
         )
 
-        force_benign = is_clearly_benign or ((not has_hard_signal) and risk_score < 0.75)
+        force_benign = is_clearly_benign or (
+            (not has_hard_signal)
+            and risk_score < 0.45
+            and (phishing_p is None or phishing_p < 0.5)
+        )
+        if has_trusted_entity and has_payment_or_debt and (has_shortened_url or suspicious_urls or urls):
+            force_benign = False
 
         top_risk = None
         if is_hebrew and not has_hard_signal and phishing_p is not None:
@@ -420,14 +418,39 @@ class RiskAnalyzer:
             risks = adjusted
 
         if urls:
-            # risk_score = min(1.0, risk_score + 0.10)
-            reasons.append("Contains a link (common in phishing/malware).")
+            if suspicious_urls:
+                reasons.append("Contains a suspicious link or spoofed domain.")
+                for item in suspicious_urls[:2]:
+                    for reason in item.get("reasons", [])[:2]:
+                        if reason not in reasons:
+                            reasons.append(reason)
+            else:
+                reasons.append("Contains a link.")
+
+        if has_shortened_url:
+            reasons.append("Contains a shortened link, which is commonly used to hide the real destination.")
+
         if "otp" in lower_text or "קוד" in text or "אימות" in text:
             reasons.append("Asks for a verification code/OTP (often account takeover).")
+
         if "bank" in lower_text or "בנק" in text:
             reasons.append("Mentions a bank/account (common in phishing).")
-        if "urgent" in lower_text or "דחוף" in text or "מיד" in text:
+
+        if has_urgency:
             reasons.append("Uses urgency pressure.")
+
+        if has_payment_or_debt:
+            reasons.append("Mentions debt, payment, fine, or settlement.")
+
+        if has_trusted_entity:
+            reasons.append("Mentions a known organization or trusted entity.")
+
+        if has_trusted_entity and (has_shortened_url or suspicious_urls):
+            reasons.append("Possible impersonation of a trusted entity using a suspicious or shortened link.")
+
+        if has_payment_or_debt and has_urgency:
+            reasons.append("Combines payment pressure with urgency.")
+
         if hebrew_signal_reasons:
             for reason in hebrew_signal_reasons:
                 if reason not in reasons:
@@ -435,27 +458,48 @@ class RiskAnalyzer:
 
         consequences = CONSEQUENCE_MAP.get(top_risk, ["Possible scam impact: money loss, account takeover, or malware."])
 
-        # risks_sorted = dict(sorted(risks.items(), key=lambda kv: kv[1], reverse=True)) if risks else {}
-        # return RiskResult(
-        #     risk_score=float(risk_score),
-        #     top_risk=top_risk,
-        #     risks=risks_sorted,
-        #     reasons=reasons[:6],
-        #     consequences=consequences[:6],
-        #     urls=urls,
-        # )
-
+        display_risks = {
+        k: v for k, v in risks.items() if k != "phishing_supervised"}
+        
         risks_sorted = (
-            {k: round(v, 2) for k, v in sorted(risks.items(), key=lambda kv: kv[1], reverse=True)}
-            if risks else {}
+        {k: round(v, 2) for k, v in sorted(display_risks.items(), key=lambda kv: kv[1], reverse=True)}
+        if display_risks else {}
         )
+
+        reasons = list(dict.fromkeys(reasons))
+        
+        if risk_score >= 0.75:
+            alert_level = "red"
+        elif risk_score >= 0.4:
+            alert_level = "yellow"
+        else:
+            alert_level = "green"
+
+        ui_suspicious_urls = [
+            {
+                "candidate": item.get("candidate"),
+                "host": item.get("host"),
+                "score": item.get("score"),
+                "reasons": item.get("reasons", [])[:2],
+            }
+            for item in suspicious_urls[:3]
+        ]
+
+        if risk_score >= 0.75:
+            message_category = "dangerous"
+        elif risk_score >= 0.4:
+            message_category = "suspicious"
+        else:
+            message_category = "safe"
 
         return RiskResult(
-            risk_score=round(float(risk_score), 2),
-            top_risk=top_risk,
-            risks=risks_sorted,
-            reasons=reasons[:6],
-            consequences=consequences[:6],
-            urls=urls,
+        risk_score=round(float(risk_score), 2),
+        alert_level=alert_level,
+        top_risk=top_risk,
+        message_category=message_category,
+        risks=risks_sorted,
+        reasons=reasons[:6],
+        consequences=consequences[:6],
+        urls=urls,
+        suspicious_urls=ui_suspicious_urls,
         )
-

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Text Alert</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f7fb;
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      max-width: 760px;
+      margin: 40px auto;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+      padding: 24px;
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 28px;
+    }
+
+    p {
+      color: #444;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 180px;
+      border: 1px solid #ccc;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 16px;
+      resize: vertical;
+      box-sizing: border-box;
+      margin-top: 10px;
+    }
+
+    button {
+      margin-top: 16px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    .result {
+      margin-top: 24px;
+      border-radius: 14px;
+      padding: 18px;
+      display: none;
+      border: 2px solid transparent;
+    }
+
+    .green {
+      background: #ecfdf5;
+      border-color: #10b981;
+    }
+
+    .yellow {
+      background: #fffbeb;
+      border-color: #f59e0b;
+    }
+
+    .red {
+      background: #fef2f2;
+      border-color: #ef4444;
+    }
+
+    .result h2 {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+
+    .score {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    ul {
+      margin-top: 8px;
+      padding-right: 20px;
+    }
+
+    .loading {
+      margin-top: 14px;
+      color: #555;
+      display: none;
+    }
+
+    .error {
+      margin-top: 16px;
+      color: #b91c1c;
+      font-weight: bold;
+      display: none;
+    }
+
+    .section-title {
+      margin-top: 14px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    .small-box {
+      margin-top: 8px;
+      padding: 10px;
+      background: rgba(255,255,255,0.6);
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>בדיקת הודעה חשודה</h1>
+    <p>הדביקי כאן הודעת SMS / וואטסאפ / מייל, והמערכת תנתח את רמת הסיכון.</p>
+
+    <textarea id="messageInput" placeholder="הדביקי כאן את ההודעה..."></textarea>
+    <button id="analyzeBtn">נתח הודעה</button>
+
+    <div class="loading" id="loading">מנתח את ההודעה...</div>
+    <div class="error" id="errorBox"></div>
+
+    <div class="result" id="resultBox">
+      <h2 id="alertTitle">תוצאה</h2>
+      <div class="score" id="riskScore"></div>
+      <div id="topRisk"></div>
+
+      <div class="section-title">סיבות:</div>
+      <ul id="reasonsList"></ul>
+
+      <div class="section-title">השלכות אפשריות:</div>
+      <ul id="consequencesList"></ul>
+
+      <div class="section-title">קישורים שנמצאו:</div>
+      <ul id="urlsList"></ul>
+
+      <div class="section-title">קישורים חשודים:</div>
+      <div id="suspiciousUrlsBox"></div>
+    </div>
+  </div>
+
+  <script>
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const messageInput = document.getElementById("messageInput");
+    const resultBox = document.getElementById("resultBox");
+    const loading = document.getElementById("loading");
+    const errorBox = document.getElementById("errorBox");
+
+    const alertTitle = document.getElementById("alertTitle");
+    const riskScore = document.getElementById("riskScore");
+    const topRisk = document.getElementById("topRisk");
+    const reasonsList = document.getElementById("reasonsList");
+    const consequencesList = document.getElementById("consequencesList");
+    const urlsList = document.getElementById("urlsList");
+    const suspiciousUrlsBox = document.getElementById("suspiciousUrlsBox");
+
+    function clearLists() {
+      reasonsList.innerHTML = "";
+      consequencesList.innerHTML = "";
+      urlsList.innerHTML = "";
+      suspiciousUrlsBox.innerHTML = "";
+    }
+
+    function addListItems(listEl, items) {
+      if (!items || items.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "לא נמצא מידע.";
+        listEl.appendChild(li);
+        return;
+      }
+
+      items.forEach(item => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        listEl.appendChild(li);
+      });
+    }
+
+    function getAlertText(level) {
+      if (level === "red") return "⚠️ הודעה מסוכנת";
+      if (level === "yellow") return "⚠️ הודעה חשודה";
+      return "✅ הודעה נראית תקינה";
+    }
+
+    analyzeBtn.addEventListener("click", async () => {
+      const text = messageInput.value.trim();
+
+      errorBox.style.display = "none";
+      resultBox.style.display = "none";
+      clearLists();
+
+      if (!text) {
+        errorBox.textContent = "יש להכניס טקסט לבדיקה.";
+        errorBox.style.display = "block";
+        return;
+      }
+
+      loading.style.display = "block";
+
+      try {
+        const response = await fetch("http://127.0.0.1:8100/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ text })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        resultBox.className = "result";
+        resultBox.classList.add(data.alert_level || "green");
+
+        alertTitle.textContent = getAlertText(data.alert_level);
+        riskScore.textContent = `ציון סיכון: ${data.risk_score}`;
+        topRisk.textContent = `סוג סיכון עיקרי: ${data.top_risk || "לא זוהה"}`;
+
+        addListItems(reasonsList, data.reasons || []);
+        addListItems(consequencesList, data.consequences || []);
+        addListItems(urlsList, data.urls || []);
+
+        if (data.suspicious_urls && data.suspicious_urls.length > 0) {
+          data.suspicious_urls.forEach(item => {
+            const box = document.createElement("div");
+            box.className = "small-box";
+
+            const title = document.createElement("div");
+            title.innerHTML = `<strong>כתובת:</strong> ${item.candidate || "-"}`;
+
+            const host = document.createElement("div");
+            host.innerHTML = `<strong>דומיין:</strong> ${item.host || "-"}`;
+
+            const score = document.createElement("div");
+            score.innerHTML = `<strong>ציון URL:</strong> ${item.score ?? "-"}`;
+
+            const reasons = document.createElement("div");
+            const reasonsText = (item.reasons || []).join(", ") || "לא צוינו סיבות";
+            reasons.innerHTML = `<strong>סיבות:</strong> ${reasonsText}`;
+
+            box.appendChild(title);
+            box.appendChild(host);
+            box.appendChild(score);
+            box.appendChild(reasons);
+
+            suspiciousUrlsBox.appendChild(box);
+          });
+        } else {
+          suspiciousUrlsBox.textContent = "לא נמצאו קישורים חשודים.";
+        }
+
+        resultBox.style.display = "block";
+      } catch (err) {
+        errorBox.textContent = "אירעה שגיאה בחיבור לשרת. ודאי שה-API רץ על פורט 8100.";
+        errorBox.style.display = "block";
+      } finally {
+        loading.style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>
