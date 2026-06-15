@@ -37,7 +37,7 @@ zero_shot = ZeroShotScamModel() if use_zero_shot else None
 analyzer = RiskAnalyzer(
     zero_shot=zero_shot,
     finetuned_phishing=FineTunedPhishingModel(
-        "./models/hebrew-phishing-model"
+        "shovalesh/hebrew-phishing-model"
     ),
 )
 
