@@ -1,16 +1,12 @@
 from __future__ import annotations
-
 import ipaddress
 import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
-
 import tldextract
 from confusable_homoglyphs import confusables
 
-
-# מותגים / גופים רגישים שאנשים נוטים להתחזות אליהם
 SUSPICIOUS_BRANDS = [
     "facebook",
     "instagram",
@@ -37,7 +33,6 @@ SUSPICIOUS_BRANDS = [
     "pepper",
 ]
 
-# החלפות נפוצות של leetspeak / spoofing
 LEET_TRANSLATIONS = {
     "0": "o",
     "1": "l",
@@ -51,7 +46,6 @@ LEET_TRANSLATIONS = {
     "$": "s",
 }
 
-# חילוץ URL או דומיין גם אם אין http/https
 URL_REGEX = re.compile(
     r"""
     (?:
@@ -69,39 +63,30 @@ SUSPICIOUS_TLDS = {
     "top", "xyz", "click", "shop", "live", "support", "country", "stream", "gq"
 }
 
-
 def normalize_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text or "").strip().lower()
-
 
 def deobfuscate_token(token: str) -> str:
     token = normalize_text(token)
     return "".join(LEET_TRANSLATIONS.get(ch, ch) for ch in token)
 
-
 def extract_urls(text: str) -> List[str]:
     if not text:
         return []
-
     matches = URL_REGEX.findall(text)
     cleaned: List[str] = []
-
     for match in matches:
         candidate = match.strip().rstrip(TRAILING_PUNCTUATION)
         if not candidate:
             continue
         cleaned.append(candidate)
-
-    # הסרת כפילויות תוך שמירת סדר
     return list(dict.fromkeys(cleaned))
-
 
 def ensure_scheme(candidate: str) -> str:
     candidate = candidate.strip()
     if not candidate.startswith(("http://", "https://")):
         return "http://" + candidate
     return candidate
-
 
 def get_host(candidate: str) -> str:
     try:
@@ -110,7 +95,6 @@ def get_host(candidate: str) -> str:
     except Exception:
         return ""
 
-
 def is_ip_host(host: str) -> bool:
     try:
         ipaddress.ip_address(host)
@@ -118,28 +102,22 @@ def is_ip_host(host: str) -> bool:
     except ValueError:
         return False
 
-
 def safe_tld_extract(host: str):
     return tldextract.extract(host)
-
 
 def has_non_ascii(host: str) -> bool:
     return any(ord(ch) > 127 for ch in host)
 
-
 def has_confusable_chars(host: str) -> bool:
     if not host:
         return False
-
     try:
         if confusables.is_mixed_script(host):
             return True
-
         result = confusables.is_confusable(host, preferred_aliases=["latin"])
         return bool(result)
     except Exception:
         return False
-
 
 def count_subdomains(host: str) -> int:
     ext = safe_tld_extract(host)
@@ -147,70 +125,48 @@ def count_subdomains(host: str) -> int:
         return 0
     return len([p for p in ext.subdomain.split(".") if p])
 
-
 def brand_spoof_check(host: str) -> Tuple[bool, Optional[str], Optional[str]]:
-    """
-    מחזיר:
-    (spoof_detected, brand, reason_code)
-    """
     ext = safe_tld_extract(host)
     domain = normalize_text(ext.domain)
     subdomain = normalize_text(ext.subdomain)
     full_core = ".".join(part for part in [subdomain, domain] if part)
-
     if not domain:
         return False, None, None
-
     domain_deobf = deobfuscate_token(domain)
     full_core_deobf = deobfuscate_token(full_core)
 
     for brand in SUSPICIOUS_BRANDS:
-        # דומיין תקין אמיתי
         if domain == brand:
             continue
-
-        # למשל faceb00k -> facebook
+        # faceb00k -> facebook
         if domain_deobf == brand:
             return True, brand, "leet_brand_spoof"
-
-        # למשל facebook-login-secure
+        # facebook-login-secure
         if brand in domain_deobf and domain_deobf != brand:
             return True, brand, "brand_embedded_in_domain"
-
-        # למשל facebook.verify-login.badsite.com
+        # facebook.verify-login.badsite.com
         if brand in full_core_deobf and domain != brand:
             return True, brand, "brand_in_subdomain_or_chain"
-
     return False, None, None
-
 
 def structural_flags(host: str) -> List[str]:
     flags: List[str] = []
     ext = safe_tld_extract(host)
-
     if not host:
         return flags
-
     if host.startswith("xn--") or ".xn--" in host:
         flags.append("punycode_domain")
-
     if is_ip_host(host):
         flags.append("ip_address_link")
-
     if host.count("-") >= 2:
         flags.append("many_hyphens")
-
     if count_subdomains(host) >= 3:
         flags.append("many_subdomains")
-
     if ext.suffix and ext.suffix.lower() in SUSPICIOUS_TLDS:
         flags.append("suspicious_tld")
-
     if len(ext.domain or "") >= 22:
         flags.append("very_long_domain")
-
     return flags
-
 
 def score_from_flags(flags: List[str]) -> int:
     weights = {
@@ -226,17 +182,13 @@ def score_from_flags(flags: List[str]) -> int:
         "brand_embedded_in_domain": 30,
         "brand_in_subdomain_or_chain": 30,
     }
-
     score = 0
     for flag in flags:
         score += weights.get(flag, 0)
-
     return min(score, 100)
-
 
 def flags_to_reasons(flags: List[str], brand: Optional[str] = None) -> List[str]:
     reasons: List[str] = []
-
     for flag in flags:
         if flag == "confusable_characters":
             reasons.append("Domain contains look-alike characters.")
@@ -272,15 +224,12 @@ def flags_to_reasons(flags: List[str], brand: Optional[str] = None) -> List[str]
                 if brand else
                 "A known brand name appears in a misleading subdomain structure."
             )
-
     return reasons
-
 
 def analyze_single_url(candidate: str) -> Dict[str, Any]:
     host = get_host(candidate)
     flags: List[str] = []
     brand: Optional[str] = None
-
     if not host:
         return {
             "candidate": candidate,
@@ -303,7 +252,6 @@ def analyze_single_url(candidate: str) -> Dict[str, Any]:
 
     flags.extend(structural_flags(host))
 
-    # הסרת כפילויות תוך שמירת סדר
     flags = list(dict.fromkeys(flags))
 
     score = score_from_flags(flags)
@@ -319,14 +267,11 @@ def analyze_single_url(candidate: str) -> Dict[str, Any]:
         "is_suspicious": score >= 25,
     }
 
-
 def analyze_urls_in_text(text: str) -> Dict[str, Any]:
     urls = extract_urls(text)
     analyzed = [analyze_single_url(u) for u in urls]
-
     suspicious = [item for item in analyzed if item["is_suspicious"]]
     max_score = max((item["score"] for item in analyzed), default=0)
-
     return {
         "found": bool(urls),
         "urls": urls,

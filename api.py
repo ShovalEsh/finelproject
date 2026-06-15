@@ -22,6 +22,7 @@ from risk_analyzer import (
 )
 
 app = FastAPI(title="Elder Message Risk Analyzer", version="1.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -67,6 +68,7 @@ async def analyze(req: AnalyzeRequest = Body(...), request: Request = None):
         "message_category": r.message_category,
         "risks": r.risks,
         "reasons": r.reasons,
+        "recommendations": r.recommendations,
         "consequences": r.consequences,
         "urls": r.urls,
         "suspicious_urls": r.suspicious_urls,

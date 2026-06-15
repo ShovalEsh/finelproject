@@ -7,6 +7,46 @@ import torch
 from url_risk import analyze_urls_in_text
 import unicodedata
 
+def generate_recommendations(risk_score, reasons, urls):
+    recommendations = []
+    reasons_text = " ".join(reasons).lower()
+    if risk_score < 0.3:
+        recommendations.append("SAFE_NO_ACTION")
+        recommendations.append("SAFE_STAY_ALERT")
+        return recommendations
+    if urls or "link" in reasons_text or "url" in reasons_text:
+        recommendations.append("AVOID_LINKS")
+    if "urgency" in reasons_text or "דחוף" in reasons_text or "urgent" in reasons_text:
+        recommendations.append("DO_NOT_RUSH")
+    if (
+        "verification" in reasons_text
+        or "otp" in reasons_text
+        or "code" in reasons_text
+        or "קוד" in reasons_text
+        or "אימות" in reasons_text
+    ):
+        recommendations.append("DO_NOT_SHARE_INFO")
+    if (
+        "debt" in reasons_text
+        or "payment" in reasons_text
+        or "fine" in reasons_text
+        or "settlement" in reasons_text
+        or "חוב" in reasons_text
+        or "תשלום" in reasons_text
+    ):
+        recommendations.append("VERIFY_PAYMENT_OFFICIAL_SOURCE")
+    if (
+        "known organization" in reasons_text
+        or "trusted entity" in reasons_text
+        or "impersonation" in reasons_text
+    ):
+        recommendations.append("CONTACT_OFFICIAL_CHANNEL")
+    if risk_score >= 0.7:
+        recommendations.append("BLOCK_AND_REPORT")
+    if not recommendations:
+        recommendations.append("BE_CAREFUL")
+    return list(dict.fromkeys(recommendations))
+
 def normalize_message_text(text: str) -> str:
     text = text or ""
     text = unicodedata.normalize("NFKC", text)
@@ -160,6 +200,7 @@ class RiskResult:
     message_category: str
     risks: Dict[str, float]
     reasons: List[str]
+    recommendations: List[str]
     consequences: List[str]
     urls: List[str]
     suspicious_urls: List[Dict[str, Any]]
@@ -492,6 +533,12 @@ class RiskAnalyzer:
         else:
             message_category = "safe"
 
+        recommendations = generate_recommendations(
+            risk_score=risk_score,
+            reasons=reasons,
+            urls=urls
+        )
+
         return RiskResult(
         risk_score=round(float(risk_score), 2),
         alert_level=alert_level,
@@ -499,6 +546,7 @@ class RiskAnalyzer:
         message_category=message_category,
         risks=risks_sorted,
         reasons=reasons[:6],
+        recommendations=recommendations[:6],
         consequences=consequences[:6],
         urls=urls,
         suspicious_urls=ui_suspicious_urls,
