@@ -1,49 +1,116 @@
-# finelproject
+# Phishing Alert App
 
-Setup and run instructions for Windows PowerShell.
+# Requirements
 
-## Setup
+Before running the project, install:
 
-```powershell
-cd C:\Users\lubac\vscodeproj\oldies\finelproject
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+- Python 3.11
+- Visual Studio Code
+- Android Studio
+- Android SDK
+- Git
+
+# Backend Setup (Visual Studio Code)
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/ShovalEsh/finelproject.git
+```
+
+### 2. Open the project
+
+Open the **TEXT_ALERT** folder in Visual Studio Code.
+
+### 3. Create a virtual environment
+
+```bash
+python -m venv venv
+```
+
+Activate it:
+
+Windows
+
+```bash
+venv\Scripts\activate
+```
+
+### 4. Install the required packages
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Train the Hebrew phishing model
+### 5. Run the backend
 
-```powershell
-python train_phishing_model.py
+```bash
+uvicorn api:app --reload --host 0.0.0.0 --port 8100
 ```
 
-This creates `models/hebrew-phishing-model`, which the API loads on startup.
+The server will be available at:
 
-## Run the API
-
-```powershell
-uvicorn api:app --reload --host 127.0.0.1 --port 8001
+```
+http://localhost:8100/docs
 ```
 
-If port 8001 is blocked, pick another port (for example `8002`).
+---
 
-## Test the API (UTF-8 payload)
+# Android Application (Android Studio)
 
-```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8001/analyze `
-  -ContentType "application/json; charset=utf-8" `
-  -Body ([System.Text.Encoding]::UTF8.GetBytes((@{ text = "YOUR_HEBREW_TEXT_HERE" } | ConvertTo-Json -Compress)))
+1. Open **PhishingAlertApp** in Android Studio.
+2. Wait for Gradle Sync to finish.
+3. Make sure the backend server is running.
+4. In `ApiService.kt`, verify that:
+
+```kotlin
+private const val BASE_URL = "http://10.0.2.2:8100/"
 ```
 
-## Optional: enable zero-shot scoring
+5. Run the application on an emulator or Android device.
 
-Zero-shot adds multilingual labels but is slower and can be noisy for Hebrew.
+---
 
-```powershell
-$env:USE_ZERO_SHOT = "true"
-uvicorn api:app --reload --host 127.0.0.1 --port 8001
+# Using the System
+
+1. Start the backend.
+2. Open the Android application.
+3. Enter or paste a message.
+4. Press **Analyze Message**.
+5. View the risk score, explanation and recommendations.
+
+---
+
+# Project Structure
+
+```
+TEXT_ALERT/
+    Backend (FastAPI + AI Model)
+
+PhishingAlertApp/
+    Android Application
 ```
 
-## Notes
+---
 
-- For a larger multi-class training pipeline, see `train_hf_classifier.py` and `COMMANDS.md`.
+# Troubleshooting
+
+If the backend does not start:
+
+- Make sure the virtual environment is activated.
+- Run:
+
+```bash
+pip install -r requirements.txt
+```
+
+If the Android application cannot connect:
+
+- Verify that the backend is running.
+- Verify that `BASE_URL` points to:
+
+```
+http://10.0.2.2:8100/
+```
+
+when using the Android emulator.
